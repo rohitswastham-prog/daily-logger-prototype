@@ -122,16 +122,17 @@ def test_model_output_is_checked_not_trusted(ctx):
             {"key": "glucose", "value": 900, "unit": "mg/dL"},  # out of range: dropped
             {"key": "walk", "value": "20", "unit": "hours"},  # unit forced back to minutes
             {"key": "blood_pressure", "value": 140},  # not a log item: dropped
-            {"key": "meal", "value": "rice"},  # no slot: dropped
+            {"key": "meal", "value": "rice"},  # no slot: kept, placed by the time of day
         ],
         "red_flags": ["chest pain", "made up flag"],
         "questions": [],
     }
     draft = text_entry(client, headers, "anything").json()
-    assert [(f["key"], f["value"], f["unit"]) for f in draft["fields"]] == [("walk", 20, "min")]
+    assert [(f["key"], f["value"], f.get("unit")) for f in draft["fields"]] == [("walk", 20, "min"), ("meal", "rice", None)]
+    assert draft["fields"][1]["slot"] in logic.SLOTS
     assert draft["red_flags"] == ["chest pain"]
-    assert "900" not in draft["summary"] and "rice" not in draft["summary"]  # rebuilt from the fields
-    assert draft["summary"] == "Walk: 20 min"
+    assert "900" not in draft["summary"] and "less rice" not in draft["summary"]  # rebuilt from the fields
+    assert draft["summary"].startswith("Walk: 20 min · ")
 
 
 def test_member_text_cannot_close_the_prompt_frame(ctx):
@@ -216,3 +217,14 @@ def test_summary_grounding_allows_times_and_values():
               {"key": "glucose", "value": 118, "unit": "mg/dL"}]
     assert logic.summary_is_grounded("Dinner at 8:15 PM with 2 chapati, sugar 118.", fields)
     assert not logic.summary_is_grounded("Sugar 180.", fields)
+
+
+def test_meal_without_a_slot_is_placed_by_time_not_dropped():
+    zone = ZoneInfo("Asia/Kolkata")
+    day = datetime(2026, 11, 5, 13, 30, tzinfo=zone)
+    said = {"summary": "", "language": "en", "red_flags": [], "questions": [],
+            "fields": [{"key": "meal", "value": "1 chapati, aloo sabzi"}]}
+    draft = logic.check_log(said, day.date(), day)
+    assert draft.fields == [{"key": "meal", "value": "1 chapati, aloo sabzi", "slot": "lunch"}]
+    timed = {**said, "fields": [{"key": "meal", "value": "dal rice", "event_time": "2026-11-05T20:15+05:30"}]}
+    assert logic.check_log(timed, day.date(), day).fields[0]["slot"] == "dinner"

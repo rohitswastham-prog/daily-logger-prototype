@@ -196,13 +196,14 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     def log_draft(user: dict, entry_id: str, kind: str, text: str, log_date: date, tz: str,
                   transcript: str | None) -> dict:
         zone = zone_of(tz)
-        user_message = logic.log_user_message(text, log_date, datetime.now(zone), tz)
+        now_local = datetime.now(zone)
+        user_message = logic.log_user_message(text, log_date, now_local, tz)
         try:
             with traced(user, entry_id, kind):
                 raw = brain.extract_log(logic.log_system_prompt(), user_message)
         except BrainError as error:
             raise ApiError(503 if error.code == "busy" else 502, error.code) from error
-        draft = logic.check_log(raw, log_date)
+        draft = logic.check_log(raw, log_date, now_local)
         log.info("draft %s kind=%s fields=%d flags=%d questions=%d dropped=%s", entry_id[:8], kind,
                  len(draft.fields), len(draft.red_flags), len(draft.questions), draft.dropped)
         return save_draft(user, entry_id, kind, log_date, tz, {

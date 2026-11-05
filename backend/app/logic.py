@@ -69,7 +69,7 @@ def log_system_prompt() -> str:
     items = "\n".join(
         f"- {item.key}: {item.label['en']}"
         + (f" (number, unit {item.unit}, plausible {item.low:g}–{item.high:g})" if item.kind == "number" else "")
-        + (" (one per meal; slot one of breakfast/lunch/dinner/snack; value = short list of what they ate)"
+        + (" (one per meal; slot one of breakfast/lunch/dinner/snack; value = short list of what they ate, keeping any amounts they said, e.g. \"1 chapati, aloo sabzi\"; if they didn't say which meal, still record it and leave slot out)"
            if item.kind == "meal" else "")
         + (" (short phrase in the member's words)" if item.kind == "text" else "")
         for item in ITEMS.values()
@@ -314,14 +314,26 @@ def summary_is_grounded(summary: str, fields: list[dict[str, Any]]) -> bool:
     return all(n in allowed or n.rstrip("0").rstrip(".") in allowed for n in found)
 
 
-def check_log(raw: Any, log_date: date) -> LogDraft:
-    """Never raises. Anything unusable is dropped and named in `dropped`."""
+def _with_slot(raw: Any, log_date: date, now_local: datetime | None) -> Any:
+    """A meal the member didn't place (no "lunch", no time) goes in the slot for its time, else for now."""
+    if not isinstance(raw, dict) or raw.get("key") != "meal" or raw.get("slot") in SLOTS:
+        return raw
+    stated = _event_time(raw.get("event_time"), log_date)
+    when = datetime.fromisoformat(stated) if stated else now_local
+    return {**raw, "slot": slot_for_time(when)} if when else raw
+
+
+def check_log(raw: Any, log_date: date, now_local: datetime | None = None) -> LogDraft:
+    """Never raises. Anything unusable is dropped and named in `dropped`.
+
+    `now_local` is the member's local time, used to place a meal they didn't name a slot for.
+    """
     if not isinstance(raw, dict):
         return LogDraft("", "en", [], [], [], ["malformed_output"])
     dropped: list[str] = []
     kept: dict[tuple[str, str | None], dict[str, Any]] = {}
     for candidate in raw.get("fields") if isinstance(raw.get("fields"), list) else []:
-        clean, reason = check_field(candidate, log_date)
+        clean, reason = check_field(_with_slot(candidate, log_date, now_local), log_date)
         if clean is None:
             dropped.append(reason or "invalid")
             continue
