@@ -59,13 +59,18 @@ http://localhost:8000`) and build with `-PbackendUrl=<tunnel URL>/`.
 
 ## Host it on Render (no PC needed)
 
-`render.yaml` is a Render Blueprint for the backend: Python 3.11, Singapore region, `/health` check, SQLite on a
-1 GB disk (Starter plan). Free-plan notes are at the bottom of the file.
+**Blueprint (recommended):** Render → **New → Blueprint** → pick this repo. `render.yaml` sets everything
+(Python 3.11.9, Free plan, Singapore, `/health` check); Render only asks for `GROQ_API_KEY`.
 
-1. Put this folder in a Git repo. The root `.gitignore` keeps `backend/.env`, the database and APKs out.
-2. In Render: **New → Blueprint**, pick the repo, and enter `GROQ_API_KEY` when asked.
-3. Build the app against the Render URL:
-   `gradlew assembleRelease -PbackendUrl=https://<your-service>.onrender.com/`
+**Web Service:** leave **Root Directory** empty and set:
+- Build: `pip install -r requirements.txt`
+- Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- Environment: `GROQ_API_KEY`, and `TEXT_MODELS=openai/gpt-oss-120b,openai/gpt-oss-20b`
+
+The root `requirements.txt`, `.python-version` and `main.py` point at `backend/`, so either way works. On the
+Free plan the database resets on every restart; `render.yaml` says how to add a disk on Starter.
+
+Then build the app against the URL: `gradlew assembleRelease -PbackendUrl=https://<your-service>.onrender.com/`
 
 ## What the app does
 
