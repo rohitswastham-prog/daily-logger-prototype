@@ -1,0 +1,17 @@
+# Backup for backend/app/keepawake.py: if the Render service ever falls asleep (say the self-ping stopped),
+# this wakes it. GitHub may run scheduled jobs late, so the self-ping is the main guard and this is the net.
+# GitHub turns scheduled workflows off after 60 days without a commit; re-enable it in the Actions tab.
+name: Keep Render awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /health
+        run: curl -fsS --retry 3 --retry-delay 20 --max-time 90 -o /dev/null -w "HTTP %{http_code} in %{time_total}s\n" https://daily-logger-prototype-1.onrender.com/health
