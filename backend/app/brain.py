@@ -14,6 +14,7 @@ import logging
 import re
 import threading
 import time
+from contextvars import ContextVar
 from collections.abc import Callable
 from typing import Any, Protocol, TypeVar
 
@@ -29,6 +30,15 @@ STT_PROMPT = "Daily health log in English, Hindi or Marathi, often mixed: meals,
 MAX_RATE_WAIT_S = 8.0  # if every model is resting, wait this long at most before saying "busy"
 DEFAULT_REST_S = 60.0
 T = TypeVar("T")
+
+# Calls made while handling one request, for the admin analytics (ids, models, counts and timings only).
+TRACE: ContextVar[list[dict[str, Any]] | None] = ContextVar("brain_trace", default=None)
+
+
+def _record(**row: Any) -> None:
+    trace = TRACE.get()
+    if trace is not None:
+        trace.append(row)
 
 
 class BrainError(Exception):
@@ -163,12 +173,14 @@ class GroqBrain:
     def status(self) -> dict[str, Any]:
         return {"text": self.text.status(), "vision": self.vision.status(), "stt": self.stt.status()}
 
-    def _post(self, key: str, path: str, what: str, **kwargs: Any) -> dict[str, Any]:
+    def _post(self, key: str, path: str, job: str, model: str, **kwargs: Any) -> dict[str, Any]:
+        what = f"{job} {model}"
         started = time.monotonic()
         try:
             response = self.http.post(f"{GROQ}{path}", headers={"Authorization": f"Bearer {key}"}, **kwargs)
         except httpx.HTTPError as error:
             log.warning("%s: network error %s", what, type(error).__name__)
+            _record(job=job, model=model, outcome="network_error", ms=int((time.monotonic() - started) * 1000))
             raise BrainError("model_failed") from error
         ms = int((time.monotonic() - started) * 1000)
         if response.status_code == 429:
@@ -181,6 +193,7 @@ class GroqBrain:
                 detail = found.group(1) if found else "rate limit"
             except ValueError:
                 pass
+            _record(job=job, model=model, outcome="rate_limited", ms=ms, detail=detail)
             raise RateLimited(rest_time(response), detail)
         if response.status_code >= 400:
             code = ""
@@ -189,16 +202,29 @@ class GroqBrain:
             except ValueError:
                 pass
             log.warning("%s: HTTP %s %s after %d ms", what, response.status_code, code, ms)
+            _record(job=job, model=model, outcome="error", ms=ms, detail=f"HTTP {response.status_code} {code}".strip())
             raise BrainError("model_failed")
         log.info("%s: ok in %d ms", what, ms)
-        return response.json()
+        data = response.json()
+        usage = data.get("usage") or {}
+        _record(
+            job=job,
+            model=model,
+            outcome="ok",
+            ms=ms,
+            tokens_in=usage.get("prompt_tokens"),
+            tokens_out=usage.get("completion_tokens"),
+            audio_s=data.get("duration"),
+        )
+        return data
 
     def transcribe(self, audio: bytes, filename: str, content_type: str) -> tuple[str, str | None]:
         def call(model: str) -> dict[str, Any]:
             return self._post(
                 self.s.groq_api_key,
                 "/audio/transcriptions",
-                f"stt {model}",
+                "stt",
+                model,
                 data={"model": model, "response_format": "verbose_json", "temperature": "0", "prompt": STT_PROMPT},
                 files={"file": (filename, audio, content_type)},
             )
@@ -223,13 +249,13 @@ class GroqBrain:
         if model.startswith("openai/gpt-oss"):
             body["reasoning_effort"] = "low"
         try:
-            data = self._post(key, "/chat/completions", f"{what} {model}", json=body)
+            data = self._post(key, "/chat/completions", what, model, json=body)
         except BrainError as error:
             if error.code != "model_failed":
                 raise
             # One retry: a malformed tool call now and then, or a model that wants "required".
             body["tool_choice"] = "required"
-            data = self._post(key, "/chat/completions", f"{what} {model} retry", json=body)
+            data = self._post(key, "/chat/completions", what, model, json=body)
         usage = data.get("usage") or {}
         log.info("%s %s: tokens in=%s out=%s", what, model, usage.get("prompt_tokens"), usage.get("completion_tokens"))
         message = (data.get("choices") or [{}])[0].get("message") or {}
@@ -275,9 +301,11 @@ class FakeBrain:
     SAMPLE = "Had dinner at 8:15, two chapati, dal and sabzi. Walked thirty minutes after. Morning sugar was 118. Felt a bit tired. Can I eat mango?"
 
     def transcribe(self, audio: bytes, filename: str, content_type: str) -> tuple[str, str | None]:
+        _record(job="stt", model="fake", outcome="ok", ms=0)
         return self.SAMPLE, "en"
 
     def extract_log(self, system: str, user: str) -> dict[str, Any]:
+        _record(job="log", model="fake", outcome="ok", ms=0)
         log_date = re.search(r"Log date: (\d{4}-\d{2}-\d{2})", user)
         day = log_date.group(1) if log_date else "2026-01-01"
         return {
@@ -294,6 +322,7 @@ class FakeBrain:
         }
 
     def extract_meal(self, image: bytes, mime: str, note: str) -> dict[str, Any]:
+        _record(job="meal", model="fake", outcome="ok", ms=0)
         return {
             "is_food": True,
             "items": [

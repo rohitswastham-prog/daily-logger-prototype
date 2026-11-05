@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Log Admin</title>
+<style>
+:root {
+  --bg: #F6F8F7; --surface: #FFFFFF; --ink: #17302E; --muted: #55676A; --line: #DCE5E3; --tint: #E3F1EF;
+  --accent: #0B6B66; --ok: #0B6B66; --warn: #B7791F; --warn-tint: #FFF4E5; --bad: #B42318; --bad-tint: #FDECEA;
+  --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0F1716; --surface: #162221; --ink: #E4EEEC; --muted: #9DB0AD; --line: #2A3F3C; --tint: #173533;
+    --accent: #4FB7AF; --ok: #4FB7AF; --warn: #E8B45C; --warn-tint: #33280F; --bad: #F49B92; --bad-tint: #3A1D1A;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+h1 { font-size: 22px; margin: 0; flex: 1; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+.muted { color: var(--muted); }
+.pill { font: 12px var(--mono); padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+button, input { font: inherit; color: var(--ink); }
+button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 7px 14px; cursor: pointer; }
+button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+input { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.grid { display: grid; gap: 12px; }
+.tiles { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin-bottom: 12px; }
+.tile .n { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tile .l { color: var(--muted); font-size: 12.5px; }
+.tile .s { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); margin-bottom: 12px; }
+@media (max-width: 800px) { .two { grid-template-columns: 1fr; } }
+.tw { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr.click { cursor: pointer; }
+tbody tr.click:hover, tbody tr.sel { background: var(--tint); }
+.tag { font-size: 12px; padding: 1px 8px; border-radius: 999px; }
+.tag.ok { background: var(--tint); color: var(--ok); }
+.tag.rate_limited { background: var(--warn-tint); color: var(--warn); }
+.tag.error, .tag.network_error { background: var(--bad-tint); color: var(--bad); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+#chart { position: relative; }
+#chart svg { display: block; width: 100%; height: 180px; }
+#tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12px; padding: 5px 8px; border-radius: 6px; display: none; white-space: nowrap; }
+#gate { max-width: 380px; margin: 80px auto; }
+#gate p { margin: 0 0 12px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.err { color: var(--bad); margin-top: 8px; }
+.pool { font: 12px var(--mono); }
+</style>
+</head>
+<body>
+<main>
+  <section id="gate" class="card" hidden>
+    <h2>Daily Log admin</h2>
+    <p class="muted">Enter the admin token (the <code>ADMIN_TOKEN</code> setting on the server).</p>
+    <form id="gateForm" class="row">
+      <input id="tokenInput" type="password" autocomplete="current-password" placeholder="Admin token" style="flex:1">
+      <button type="submit">Open</button>
+    </form>
+    <div id="gateErr" class="err"></div>
+  </section>
+
+  <section id="app" hidden>
+    <header>
+      <h1>Daily Log admin</h1>
+      <span class="pill" id="engine"></span>
+      <span class="muted" id="asof"></span>
+      <button class="ghost" id="refresh">Refresh</button>
+      <button class="ghost" id="signout">Sign out</button>
+    </header>
+
+    <div class="grid tiles" id="tiles"></div>
+
+    <div class="grid two">
+      <div class="card">
+        <h2>Groq calls per hour, last 24 h (IST)</h2>
+        <div class="legend"><span><i style="background:var(--ok)"></i>Answered</span><span><i style="background:var(--warn)"></i>Rate-limited or failed</span></div>
+        <div id="chart"><div id="tip"></div></div>
+      </div>
+      <div class="card">
+        <h2>Models today</h2>
+        <div class="tw"><table id="models"></table></div>
+        <h2 style="margin-top:14px">Resting now (after a limit)</h2>
+        <div id="pools" class="pool muted"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <h2>Numbers that signed in</h2>
+      <p class="muted" style="margin:-4px 0 8px">Click a number to see only its calls.</p>
+      <div class="tw"><table id="users"></table></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <h2 style="margin:0">Groq calls <span class="muted" id="callsFor"></span></h2>
+        <div class="row"><input id="phoneFilter" placeholder="+91…" size="16"><button class="ghost" id="clearFilter">All numbers</button></div>
+      </div>
+      <div class="tw"><table id="calls"></table></div>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  const KEY = "dl-admin-token";
+  const $ = (id) => document.getElementById(id);
+  let token = null, phone = "";
+  try { token = sessionStorage.getItem(KEY); } catch (e) {}
+  // /admin#token=… opens straight in (the fragment never reaches the server); drop it from the address bar at once.
+  const fromHash = new URLSearchParams(location.hash.slice(1)).get("token");
+  if (fromHash) {
+    token = fromHash;
+    try { sessionStorage.setItem(KEY, token); } catch (e) {}
+    history.replaceState(null, "", location.pathname);
+  }
+
+  const fmtTime = (iso) => iso ? new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
+  const n = (v) => (v ?? 0).toLocaleString("en-IN");
+
+  async function api(path) {
+    const r = await fetch(path, { headers: { "X-Admin-Token": token || "" } });
+    if (r.status === 401) throw new Error("auth");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+
+  function el(tag, attrs = {}, ...kids) {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) { if (k === "class") e.className = v; else if (k === "onclick") e.onclick = v; else e.setAttribute(k, v); }
+    for (const k of kids) e.append(k instanceof Node ? k : document.createTextNode(k ?? ""));
+    return e;
+  }
+  function table(target, cols, rows, onRow) {
+    const t = $(target); t.replaceChildren();
+    t.append(el("thead", {}, el("tr", {}, ...cols.map(c => el("th", { class: c.num ? "num" : "" }, c.label)))));
+    const body = el("tbody");
+    if (!rows.length) body.append(el("tr", {}, el("td", { colspan: cols.length, class: "muted" }, "Nothing yet.")));
+    for (const r of rows) {
+      const tr = el("tr", onRow ? { class: "click" + (r.phone && r.phone === phone ? " sel" : ""), onclick: () => onRow(r) } : {});
+      for (const c of cols) {
+        const v = c.get(r);
+        tr.append(el("td", { class: c.num ? "num" : "" }, v instanceof Node ? v : String(v ?? "—")));
+      }
+      body.append(tr);
+    }
+    t.append(body);
+  }
+  const tag = (o) => el("span", { class: "tag " + o }, o.replace("_", " "));
+
+  function tiles(o) {
+    const saved = o.entries_saved_today || {};
+    const items = [
+      ["Numbers registered", n(o.users_total), `${n(o.users_new_today)} new today`],
+      ["Active today", n(o.active_today), `${n(o.logins_today)} sign-ins today`],
+      ["Groq calls today", n(o.calls_today), `${n(o.calls_limited_today)} rate-limited · ${n(o.calls_failed_today)} failed`],
+      ["Tokens today", n(o.tokens_today), "in + out, all models"],
+      ["Entries saved today", n((saved.text || 0) + (saved.voice || 0) + (saved.photo || 0)), `typed ${n(saved.text)} · voice ${n(saved.voice)} · photo ${n(saved.photo)}`],
+    ];
+    $("tiles").replaceChildren(...items.map(([l, v, s]) => el("div", { class: "card tile" }, el("div", { class: "l" }, l), el("div", { class: "n" }, v), el("div", { class: "s" }, s))));
+  }
+
+  function chart(hourly) {
+    const box = $("chart"), tip = $("tip");
+    box.querySelector("svg")?.remove();
+    const W = 720, H = 180, padL = 30, padB = 22, padT = 8;
+    const max = Math.max(1, ...hourly.map(h => h.ok + h.not_ok));
+    const step = (W - padL) / hourly.length, bw = Math.max(4, step - 4);
+    const y = (v) => (H - padB) - (v / max) * (H - padB - padT);
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Groq calls per hour over the last 24 hours");
+    const css = getComputedStyle(document.documentElement);
+    const col = (v) => css.getPropertyValue(v).trim();
+    const mk = (tagName, a) => { const e = document.createElementNS(ns, tagName); for (const k in a) e.setAttribute(k, a[k]); return e; };
+    [0, Math.round(max / 2), max].forEach(v => {
+      svg.append(mk("line", { x1: padL, x2: W, y1: y(v), y2: y(v), stroke: col("--line"), "stroke-width": 1 }));
+      const t = mk("text", { x: padL - 6, y: y(v) + 4, "text-anchor": "end", "font-size": 10, fill: col("--muted") }); t.textContent = v; svg.append(t);
+    });
+    hourly.forEach((h, i) => {
+      const x = padL + i * step + (step - bw) / 2;
+      const okTop = y(h.ok), badTop = y(h.ok + h.not_ok);
+      if (h.ok) svg.append(mk("rect", { x, y: okTop, width: bw, height: (H - padB) - okTop, rx: 2, fill: col("--ok") }));
+      if (h.not_ok) svg.append(mk("rect", { x, y: badTop, width: bw, height: Math.max(0, okTop - badTop - (h.ok ? 2 : 0)), rx: 2, fill: col("--warn") }));
+      const label = new Date(h.hour).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric" });
+      if (i % 4 === 3) { const t = mk("text", { x: x + bw / 2, y: H - 6, "text-anchor": "middle", "font-size": 10, fill: col("--muted") }); t.textContent = label; svg.append(t); }
+      const hit = mk("rect", { x: padL + i * step, y: 0, width: step, height: H, fill: "transparent" });
+      hit.addEventListener("mousemove", (ev) => {
+        tip.textContent = `${label}: ${h.ok} answered, ${h.not_ok} limited/failed`;
+        const r = box.getBoundingClientRect(); tip.style.display = "block";
+        tip.style.left = Math.min(ev.clientX - r.left + 10, r.width - tip.offsetWidth) + "px"; tip.style.top = (ev.clientY - r.top - 30) + "px";
+      });
+      hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      svg.append(hit);
+    });
+    box.append(svg);
+  }
+
+  async function load() {
+    try {
+      const [o, users, calls] = await Promise.all([api("/admin/api/overview"), api("/admin/api/users"), api("/admin/api/calls?limit=200" + (phone ? "&phone=" + encodeURIComponent(phone) : ""))]);
+      $("gate").hidden = true; $("app").hidden = false;
+      $("engine").textContent = o.engine === "groq" ? "Groq live" : "fake mode (no key)";
+      $("asof").textContent = "Updated " + fmtTime(o.as_of) + " IST · refreshes every 30 s";
+      tiles(o); chart(o.hourly);
+      table("models", [
+        { label: "Model", get: r => r.model }, { label: "Jobs", get: r => r.jobs.join(", ") },
+        { label: "Answered", num: 1, get: r => n(r.ok) }, { label: "Limited", num: 1, get: r => n(r.rate_limited) },
+        { label: "Failed", num: 1, get: r => n(r.errors) }, { label: "Tokens", num: 1, get: r => n(r.tokens_in + r.tokens_out) },
+        { label: "Avg ms", num: 1, get: r => r.avg_ms == null ? "—" : n(r.avg_ms) },
+      ], o.models_today);
+      const resting = [];
+      for (const [job, pool] of Object.entries(o.pools || {})) for (const [m, s] of Object.entries(pool)) if (s.resting_s > 0) resting.push(`${m} (${job}): ${s.resting_s} s`);
+      $("pools").textContent = resting.length ? resting.join(" · ") : "None. Every model is available.";
+      table("users", [
+        { label: "Number", get: r => r.phone }, { label: "First seen", get: r => fmtTime(r.created_at) },
+        { label: "Last sign-in", get: r => fmtTime(r.last_login) }, { label: "Sign-ins", num: 1, get: r => n(r.logins) },
+        { label: "Saved entries", num: 1, get: r => n(r.saved) }, { label: "Groq calls", num: 1, get: r => n(r.calls) },
+        { label: "Limited/failed", num: 1, get: r => n(r.calls_not_ok) }, { label: "Tokens", num: 1, get: r => n(r.tokens) },
+        { label: "Last call", get: r => fmtTime(r.last_call) },
+      ], users, (r) => { phone = r.phone; $("phoneFilter").value = phone; load(); });
+      $("callsFor").textContent = phone ? "for " + phone : "(latest 200)";
+      table("calls", [
+        { label: "Time (IST)", get: r => fmtTime(r.created_at) }, { label: "Number", get: r => r.phone },
+        { label: "Entry", get: r => r.kind }, { label: "Step", get: r => ({ stt: "speech-to-text", log: "read log", meal: "read photo" })[r.job] || r.job },
+        { label: "Model", get: r => r.model }, { label: "Result", get: r => tag(r.outcome) },
+        { label: "Tokens in", num: 1, get: r => r.tokens_in == null ? "—" : n(r.tokens_in) },
+        { label: "Tokens out", num: 1, get: r => r.tokens_out == null ? "—" : n(r.tokens_out) },
+        { label: "Audio s", num: 1, get: r => r.audio_s == null ? "—" : r.audio_s.toFixed(1) },
+        { label: "ms", num: 1, get: r => r.ms == null ? "—" : n(r.ms) }, { label: "Detail", get: r => r.detail || "" },
+      ], calls);
+    } catch (e) {
+      if (e.message === "auth") { signOut("Wrong admin token."); return; }
+      $("asof").textContent = "Couldn't refresh (" + e.message + "). Retrying…";
+    }
+  }
+
+  function signOut(msg) {
+    token = null; try { sessionStorage.removeItem(KEY); } catch (e) {}
+    $("app").hidden = true; $("gate").hidden = false; $("gateErr").textContent = msg || "";
+  }
+
+  $("gateForm").onsubmit = (ev) => { ev.preventDefault(); token = $("tokenInput").value.trim(); try { sessionStorage.setItem(KEY, token); } catch (e) {} load(); };
+  $("refresh").onclick = load;
+  $("signout").onclick = () => signOut("");
+  $("phoneFilter").onchange = () => { phone = $("phoneFilter").value.trim(); load(); };
+  $("clearFilter").onclick = () => { phone = ""; $("phoneFilter").value = ""; load(); };
+  setInterval(() => { if (token && !$("app").hidden) load(); }, 30000);
+  if (token) load(); else $("gate").hidden = false;
+})();
+</script>
+</body>
+</html>

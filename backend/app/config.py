@@ -24,6 +24,7 @@ class Settings:
     max_text_chars: int
     max_audio_bytes: int
     max_image_bytes: int
+    admin_token: str | None = None
 
     @property
     def fake(self) -> bool:
@@ -61,4 +62,5 @@ def load_settings() -> Settings:
         max_text_chars=_int("MAX_TEXT_CHARS", 2000),
         max_audio_bytes=_int("MAX_AUDIO_MB", 20) * MB,
         max_image_bytes=_int("MAX_IMAGE_MB", 4) * MB,
+        admin_token=os.getenv("ADMIN_TOKEN", "").strip() or None,
     )

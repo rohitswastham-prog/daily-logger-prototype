@@ -11,6 +11,8 @@ import logging
 import re
 import secrets
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -21,7 +23,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app import logic
-from app.brain import Brain, BrainError, make_brain
+from app.admin import mount_admin
+from app.brain import TRACE, Brain, BrainError, make_brain
 from app.config import Settings, load_settings
 from app.db import Store, dumps, loads
 
@@ -98,6 +101,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         if is_new:
             store.run("INSERT INTO users (id, phone, created_at) VALUES (?, ?, ?)", user_id, phone, now_iso())
         token = secrets.token_urlsafe(32)
+        store.run("INSERT INTO logins (user_id, is_new, created_at) VALUES (?, ?, ?)", user_id, int(is_new), now_iso())
         store.run("INSERT INTO sessions (token_hash, user_id, created_at) VALUES (?, ?, ?)",
                   token_hash(token), user_id, now_iso())
         log.info("login user=%s new=%s", user_id[:8], is_new)
@@ -124,6 +128,23 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         }
 
     # ------------------------------------------------------------ helpers
+
+    @contextmanager
+    def traced(user: dict, entry_id: str, kind: str) -> Iterator[None]:
+        """Store every Groq call made inside, with who caused it (for /admin). Counts and timings only."""
+        trace: list[dict[str, Any]] = []
+        token = TRACE.set(trace)
+        try:
+            yield
+        finally:
+            TRACE.reset(token)
+            for row in trace:
+                store.run(
+                    "INSERT INTO llm_calls (user_id, entry_id, kind, job, model, outcome, ms, tokens_in, tokens_out, "
+                    "audio_s, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    user["id"], entry_id, kind, row.get("job"), row.get("model"), row.get("outcome"), row.get("ms"),
+                    row.get("tokens_in"), row.get("tokens_out"), row.get("audio_s"), row.get("detail"), now_iso(),
+                )
 
     def zone_of(name: str) -> ZoneInfo:
         try:
@@ -177,7 +198,8 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         zone = zone_of(tz)
         user_message = logic.log_user_message(text, log_date, datetime.now(zone), tz)
         try:
-            raw = brain.extract_log(logic.log_system_prompt(), user_message)
+            with traced(user, entry_id, kind):
+                raw = brain.extract_log(logic.log_system_prompt(), user_message)
         except BrainError as error:
             raise ApiError(503 if error.code == "busy" else 502, error.code) from error
         draft = logic.check_log(raw, log_date)
@@ -231,7 +253,8 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         if len(data) > settings.max_audio_bytes:
             raise ApiError(413, "too_long", "That recording is too long.")
         try:
-            transcript, _ = brain.transcribe(data, audio.filename or "voice.m4a", audio.content_type or "audio/mp4")
+            with traced(user, entry_id, "voice"):
+                transcript, _ = brain.transcribe(data, audio.filename or "voice.m4a", audio.content_type or "audio/mp4")
         except BrainError as error:
             raise ApiError(503 if error.code == "busy" else 502, error.code) from error
         if not transcript:
@@ -266,7 +289,8 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         meal_slot = slot if slot in logic.SLOTS else logic.slot_for_time(datetime.now(zone))
         note = f"The member says this is their {meal_slot}."
         try:
-            raw = brain.extract_meal(data, mime, note)
+            with traced(user, entry_id, "photo"):
+                raw = brain.extract_meal(data, mime, note)
         except BrainError as error:
             raise ApiError(503 if error.code == "busy" else 502, error.code) from error
         meal = logic.check_meal(raw)
@@ -362,6 +386,7 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
         )
         return {"log_date": wanted.isoformat(), "entries": [view(r) for r in rows], "strip": strip}
 
+    mount_admin(app, store, settings, brain)
     return app
 
 

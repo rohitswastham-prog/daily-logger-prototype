@@ -29,6 +29,30 @@ CREATE TABLE IF NOT EXISTS entries (
     confirmed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS entries_user_day ON entries(user_id, log_date, status);
+CREATE TABLE IF NOT EXISTS logins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    is_new INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+-- One row per Groq call, for the admin analytics. Ids, models, counts and timings only: never content.
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+    entry_id TEXT,
+    kind TEXT,                       -- text | voice | photo
+    job TEXT NOT NULL,               -- stt | log | meal
+    model TEXT NOT NULL,
+    outcome TEXT NOT NULL,           -- ok | rate_limited | error | network_error
+    ms INTEGER,
+    tokens_in INTEGER,
+    tokens_out INTEGER,
+    audio_s REAL,
+    detail TEXT,                     -- limit type or HTTP code, never member data
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS llm_calls_time ON llm_calls(created_at);
+CREATE INDEX IF NOT EXISTS llm_calls_user ON llm_calls(user_id, created_at);
 """
 
 

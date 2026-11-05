@@ -72,6 +72,22 @@ Free plan the database resets on every restart; `render.yaml` says how to add a 
 
 Then build the app against the URL: `gradlew assembleRelease -PbackendUrl=https://<your-service>.onrender.com/`
 
+## Admin analytics (`/admin`)
+
+Open `https://<your-service>/admin` (or http://localhost:8000/admin) and enter the `ADMIN_TOKEN`:
+- **Locally:** it's in `backend/.env`.
+- **On Render:** a Blueprint generates it (Environment tab). On a Web Service, add `ADMIN_TOKEN` yourself.
+- **Without `ADMIN_TOKEN`:** `/admin` doesn't exist (404).
+
+The page shows:
+- numbers registered, active today and sign-ins
+- every Groq call: which number, entry type, step, model, result (answered, rate-limited, failed), tokens, audio
+  seconds and speed
+- calls per hour over the last 24 h, per-model totals, and which models are resting after a limit
+
+It never shows what members said, typed or photographed. Click a number to see only its calls. On Render's Free
+plan the analytics reset with the database.
+
 ## What the app does
 
 1. **Sign in:** enter a 10-digit mobile number. A new number registers; a known one signs in.

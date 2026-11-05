@@ -38,6 +38,8 @@ services:
         value: whisper-large-v3,whisper-large-v3-turbo
       - key: PHOTO_DAILY_CAP
         value: "4"
+      - key: ADMIN_TOKEN # opens /admin; Render generates it, copy it from the Environment tab
+        generateValue: true
 
 # Free plan: the service sleeps after 15 minutes idle (first request then takes ~50 s), and the SQLite file
 # resets on every deploy or restart, so accounts and saved logs disappear.
