@@ -41,8 +41,10 @@ services:
       - key: ADMIN_TOKEN # opens /admin; Render generates it, copy it from the Environment tab
         generateValue: true
 
-# Free plan: the service sleeps after 15 minutes idle (first request then takes ~50 s), and the SQLite file
-# resets on every deploy or restart, so accounts and saved logs disappear.
+# Free plan: the service would sleep after 15 minutes idle (first request then takes ~50 s). It stays awake
+# by pinging its own /health every 10 minutes (backend/app/keepawake.py; KEEP_AWAKE=0 turns that off), with
+# .github/workflows/keep-awake.yml as a backup. The SQLite file still resets on every deploy or restart, so
+# accounts and saved logs disappear.
 #
 # To keep data, switch to the Starter plan and add a disk: change `plan: free` to `plan: starter`, add
 #      - key: DB_PATH

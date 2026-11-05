@@ -10,9 +10,10 @@ import hashlib
 import logging
 import re
 import secrets
+import threading
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -22,7 +23,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app import logic
+from app import keepawake, logic
 from app.admin import mount_admin
 from app.brain import TRACE, Brain, BrainError, make_brain
 from app.config import Settings, load_settings
@@ -51,7 +52,14 @@ def create_app(settings: Settings | None = None, brain: Brain | None = None) -> 
     settings = settings or load_settings()
     brain = brain or make_brain(settings)
     store = Store(settings.db_path)
-    app = FastAPI(title="Daily Log prototype", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        stop = threading.Event()
+        keepawake.start(stop)  # on Render only: stops the free plan's 15-minute sleep
+        yield
+        stop.set()
+
+    app = FastAPI(title="Daily Log prototype", version="0.1.0", lifespan=lifespan)
     log.info("brain=%s text=%s vision=%s stt=%s", brain.name, settings.text_models, settings.vision_models,
              settings.stt_models)
 
