@@ -1,0 +1,13 @@
+# Never commit keys or test data
+backend/.env
+backend/*.db
+backend/*.db-journal
+backend/.venv/
+**/__pycache__/
+.pytest_cache/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+*.apk

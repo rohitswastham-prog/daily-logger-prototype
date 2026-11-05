@@ -1,0 +1,47 @@
+# Render Blueprint for the Daily Log prototype backend (https://render.com/docs/blueprint-spec).
+#
+# Deploy: put this folder in a Git repo (GitHub/GitLab/Bitbucket), then Render dashboard → New → Blueprint →
+# pick the repo. Render reads this file, creates the service, and asks for the two Groq keys (sync: false).
+#
+# The Android app then talks to https://<service-name>.onrender.com/ — build it with:
+#   gradlew assembleRelease -PbackendUrl=https://daily-log-prototype.onrender.com/
+# (use the exact URL Render shows on the service page).
+#
+# Prototype only: test data, Groq processes in the US, sign-in has no OTP.
+
+services:
+  - type: web
+    name: daily-log-prototype
+    runtime: python
+    rootDir: backend
+    region: singapore          # closest Render region to India
+    plan: starter              # needed for the disk below; see the note on the free plan
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: false          # deploy only when you click "Manual Deploy"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GROQ_API_KEY      # entered in the Render dashboard, never committed
+        sync: false
+      - key: GROQ_VISION_API_KEY
+        sync: false            # leave empty to use GROQ_API_KEY for photos
+      - key: TEXT_MODELS
+        value: openai/gpt-oss-120b,openai/gpt-oss-20b
+      - key: VISION_MODELS
+        value: qwen/qwen3.8-27b
+      - key: STT_MODELS
+        value: whisper-large-v3,whisper-large-v3-turbo
+      - key: PHOTO_DAILY_CAP
+        value: "4"
+      - key: DB_PATH           # SQLite on the persistent disk, so accounts and logs survive deploys
+        value: /var/data/prototype.db
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+
+# Free plan instead (no cost): change `plan: starter` to `plan: free`, delete the `disk:` block and the DB_PATH
+# entry. Two catches: the free service sleeps after 15 minutes idle (the first request then takes ~50 s), and
+# the SQLite file is wiped on every deploy or restart, so sign-ins and saved logs disappear.
