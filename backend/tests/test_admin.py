@@ -73,8 +73,31 @@ def test_logins_and_calls_are_counted_per_number(tmp_path):
     assert "PRIVATE-WORDS" not in everything  # analytics never carry what members said
 
 
-@pytest.mark.parametrize("path", ["/admin/api/overview", "/admin/api/users", "/admin/api/calls"])
+@pytest.mark.parametrize("path", ["/admin/api/overview", "/admin/api/users", "/admin/api/calls", "/admin/api/entries"])
 def test_member_tokens_do_not_open_admin(tmp_path, path):
     client = make(tmp_path)
     member = sign_in(client, "9000000103")
     assert client.get(path, headers=member).status_code == 401
+
+
+def test_saved_logs_per_member_without_drafts_or_raw_words(tmp_path):
+    client = make(tmp_path)
+    a, b = sign_in(client, "9000000201"), sign_in(client, "9000000202")
+    def log(headers, text, save=True):
+        draft = client.post("/entries/text", headers=headers, json={
+            "entry_id": str(uuid.uuid4()), "log_date": today(), "time_zone": TZ, "text": text}).json()
+        if save:
+            client.post(f"/entries/{draft['id']}/confirm", headers=headers, json={"fields": draft["fields"]})
+    log(a, "RAW-WORDS dinner")
+    log(a, "left as a draft", save=False)
+    log(b, "another member")
+
+    mine = client.get("/admin/api/entries", headers=ADMIN, params={"phone": "+919000000201"})
+    assert mine.status_code == 200
+    rows = mine.json()
+    assert len(rows) == 1 and rows[0]["phone"] == "+919000000201" and rows[0]["log_date"] == today()
+    assert {f["key"] for f in rows[0]["fields"]} == {"meal", "walk", "glucose", "feeling"}
+    assert "RAW-WORDS" not in mine.text and "transcript" not in rows[0]
+    assert len(client.get("/admin/api/entries", headers=ADMIN).json()) == 2
+    assert client.get("/admin/api/entries", headers=ADMIN, params={"from": "2000-01-01", "to": "2000-01-02"}).json() == []
+    assert client.get("/admin/api/entries", headers=ADMIN, params={"from": "yesterday"}).status_code == 400

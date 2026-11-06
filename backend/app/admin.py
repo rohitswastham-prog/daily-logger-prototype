@@ -1,7 +1,9 @@
-"""Admin analytics: who signed in, and every Groq call they caused.
+"""Admin analytics: who signed in, every Groq call they caused, and the logs they saved.
 
 Open /admin and enter ADMIN_TOKEN. Without ADMIN_TOKEN set, every /admin route answers 404.
-Shows phone numbers, counts, models, tokens, timings and outcomes. Never what members said, typed or photographed.
+The overview, users and calls show phone numbers, counts, models, tokens, timings and outcomes only.
+/admin/api/entries returns saved logs: the confirmed card (fields or meal items, summary, red flags, questions),
+never the raw transcript, typed text or photo, and never drafts or discarded entries.
 """
 
 import secrets
@@ -14,7 +16,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from app.config import Settings
-from app.db import Store
+from app.db import Store, loads
 
 IST = ZoneInfo("Asia/Kolkata")
 PAGE = Path(__file__).with_name("admin.html")
@@ -141,3 +143,37 @@ def mount_admin(app: FastAPI, store: Store, settings: Settings, brain: Any) -> N
         sql += " ORDER BY c.id DESC LIMIT ?"
         args.append(limit)
         return [dict(r) for r in store.all(sql, *args)]
+
+    @app.get("/admin/api/entries", dependencies=[Depends(require_admin)])
+    def entries(
+        phone: str = Query(default="", description="Only this member, as stored, e.g. +919876543210"),
+        date_from: str = Query(default="", alias="from", pattern=r"^(\d{4}-\d{2}-\d{2})?$"),
+        date_to: str = Query(default="", alias="to", pattern=r"^(\d{4}-\d{2}-\d{2})?$"),
+        limit: int = Query(default=500, ge=1, le=5000),
+    ) -> list[dict[str, Any]]:
+        """Saved logs, newest first. `from`/`to` are inclusive log dates (the member's local day)."""
+        sql = ("SELECT e.id, u.phone, e.kind, e.log_date, e.time_zone, e.created_at, e.confirmed_at, e.body "
+               "FROM entries e JOIN users u ON u.id = e.user_id WHERE e.status = 'confirmed'")
+        args: list[Any] = []
+        for clause, value in (("u.phone = ?", phone), ("e.log_date >= ?", date_from), ("e.log_date <= ?", date_to)):
+            if value:
+                sql += f" AND {clause}"
+                args.append(value)
+        sql += " ORDER BY e.confirmed_at DESC LIMIT ?"
+        args.append(limit)
+        out = []
+        for row in store.all(sql, *args):
+            body = loads(row["body"])
+            entry = {k: row[k] for k in ("id", "phone", "kind", "log_date", "time_zone", "created_at", "confirmed_at")}
+            entry["summary"] = body.get("summary", "")
+            entry["language"] = body.get("language")
+            if row["kind"] == "photo":
+                entry["slot"] = body.get("slot")
+                entry["items"] = body.get("items", [])
+                entry["flags"] = body.get("flags", [])
+            else:
+                entry["fields"] = [{k: v for k, v in f.items() if k != "label"} for f in body.get("fields", [])]
+                entry["red_flags"] = body.get("red_flags", [])
+                entry["questions"] = body.get("questions", [])
+            out.append(entry)
+        return out
